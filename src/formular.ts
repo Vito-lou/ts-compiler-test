@@ -45,7 +45,7 @@ function handleChangeVariableNode(node: any, context: Context): ts.Statement {
     context.setVariable(variableName, valueExpression); // 更新上下文中的变量
 
     return ts.factory.createVariableStatement(
-        [ts.factory.createModifier(ts.SyntaxKind.ConstKeyword)],
+        undefined,
         ts.factory.createVariableDeclarationList(
             [
                 ts.factory.createVariableDeclaration(
@@ -55,7 +55,7 @@ function handleChangeVariableNode(node: any, context: Context): ts.Statement {
                     valueExpression // 使用生成的值表达式
                 )
             ],
-            ts.NodeFlags.None
+            ts.NodeFlags.Const
         )
     );
 }
@@ -152,26 +152,148 @@ function generateTsCode(intermediateJson: any): ts.SourceFile {
         context.setVariable(variable.key, variable.name);
     }
 
-    for (const node of intermediateJson.nodes) {
-        switch (node.shape) {
-            case 'change-variable-node':
-                statements.push(handleChangeVariableNode(node, context));
-                break;
-            case 'if-node':
-                statements.push(handleIfNode(node, context, formulaEditor));
-                break;
-            case 'switch-node':
-                statements.push(handleSwitchNode(node, context));
-                break;
-            // 其他节点类型的处理...
-            default:
-                console.warn(`未处理的节点类型: ${node.shape}`);
+
+    // 从 start-node 开始处理节点
+    let currentNodeId = intermediateJson.nodes.find((node: any) => node.shape === 'start-node')?.id;
+
+    while (currentNodeId) {
+        const currentNode = intermediateJson.nodes.find((node: any) => node.id === currentNodeId);
+        if (currentNode) {
+            switch (currentNode.shape) {
+                case 'change-variable-node':
+                    statements.push(handleChangeVariableNode(currentNode, context));
+                    break;
+                case 'if-node':
+                    statements.push(handleIfNode(currentNode, context, formulaEditor));
+                    break;
+                case 'switch-node':
+                    statements.push(handleSwitchNode(currentNode, context));
+                    break;
+                case 'loop-node':
+                    statements.push(handleLoopNode(currentNode, context));
+                    break;
+                // 其他节点类型的处理...
+                default:
+                    console.warn(`未处理的节点类型: ${currentNode.shape}`);
+            }
+            currentNodeId = currentNode.next; // 更新当前节点为下一个节点
+        } else {
+            break; // 如果找不到当前节点，退出循环
         }
     }
     // console.log('statements', JSON.stringify(statements))
     return ts.factory.createSourceFile(statements, ts.factory.createToken(ts.SyntaxKind.EndOfFileToken), ts.NodeFlags.None);
 }
 
+// 处理循环节点的函数
+function handleLoopNode(node: any, context: Context): ts.Statement {
+    const loopStatements = node.body.map((bodyNodeId: string) => {
+        const bodyNodeInfo = intermediateJson.nodes.find((n: any) => n.id === bodyNodeId);
+        return handleNode(bodyNodeInfo, context); // 递归处理每个节点，传入完整的节点信息
+    });
+
+    // 处理 loopObject 的值
+    const loopObjectValueExpression = ts.factory.createCallExpression(
+        ts.factory.createPropertyAccessExpression(
+            ts.factory.createNewExpression(ts.factory.createIdentifier('FormulaEditor'), undefined, []),
+            'parse'
+        ),
+        undefined,
+        [ts.factory.createStringLiteral(node.properties.loopList)] // 使用 createStringLiteral
+    );
+
+    // 创建 for 循环
+    // return ts.factory.createForStatement(
+    //     ts.factory.createVariableDeclarationList([
+    //         ts.factory.createVariableDeclaration(
+    //             ts.factory.createIdentifier(node.properties.loopIndex), // 循环索引
+    //             undefined,
+    //             undefined,
+    //             ts.factory.createNumericLiteral(0) // 初始化索引为 0
+    //         )
+    //     ]),
+    //     ts.factory.createBinaryExpression(
+    //         ts.factory.createIdentifier(node.properties.loopIndex), // 循环条件
+    //         ts.SyntaxKind.LessThanToken,
+    //         ts.factory.createPropertyAccessExpression(
+    //             loopObjectValueExpression, // 使用生成的 loopObject 值
+    //             ts.factory.createIdentifier("length") // 获取数组长度
+    //         )
+    //     ),
+    //     ts.factory.createPostfixIncrement(ts.factory.createIdentifier(node.properties.loopIndex)), // 增量
+    //     ts.factory.createBlock([
+    //         ts.factory.createVariableStatement(
+    //             [ts.factory.createModifier(ts.SyntaxKind.ConstKeyword)], // 使用 const
+    //             ts.factory.createVariableDeclarationList([
+    //                 ts.factory.createVariableDeclaration(
+    //                     ts.factory.createIdentifier(node.properties.loopObject), // 循环中的每一项
+    //                     undefined,
+    //                     undefined,
+    //                     ts.factory.createElementAccessExpression(
+    //                         loopObjectValueExpression, // 使用生成的 loopObject 值
+    //                         ts.factory.createIdentifier(node.properties.loopIndex) // 当前索引
+    //                     )
+    //                 )
+    //             ])
+    //         ),
+    //         ...loopStatements // 循环体内的其他语句
+    //     ], true) // 循环体
+    // );
+    return ts.factory.createForStatement(
+        ts.factory.createVariableDeclarationList([
+            ts.factory.createVariableDeclaration(
+                ts.factory.createIdentifier(node.properties.loopIndex),
+                undefined,
+                undefined,
+                ts.factory.createNumericLiteral(0)
+            )
+        ], ts.NodeFlags.Let),
+        ts.factory.createBinaryExpression(
+            ts.factory.createIdentifier(node.properties.loopIndex),
+            ts.SyntaxKind.LessThanToken,
+            ts.factory.createPropertyAccessExpression(
+                loopObjectValueExpression,
+                ts.factory.createIdentifier("length")
+            )
+        ),
+        ts.factory.createPostfixIncrement(ts.factory.createIdentifier(node.properties.loopIndex)),
+        ts.factory.createBlock([
+            // ts.factory.createVariableStatement(
+            //     undefined,
+            ts.factory.createVariableDeclarationList([
+                ts.factory.createVariableDeclaration(
+                    ts.factory.createIdentifier(node.properties.loopObject),
+                    undefined,
+                    undefined,
+                    ts.factory.createElementAccessExpression(
+                        loopObjectValueExpression,
+                        ts.factory.createIdentifier(node.properties.loopIndex)
+                    )
+                )
+            ], ts.NodeFlags.Const),
+            // ),
+            ...loopStatements
+        ], true)
+    );
+}
+
+// 处理任意节点的函数
+function handleNode(node: any, context: Context): ts.Statement {
+    switch (node.shape) {
+        case 'change-variable-node':
+            return handleChangeVariableNode(node, context);
+        case 'if-node':
+            return handleIfNode(node, context, new FormulaEditor());
+        case 'switch-node':
+            return handleSwitchNode(node, context);
+        case 'loop-node':
+            return handleLoopNode(node, context);
+        // 其他节点类型的处理...
+        default:
+            console.warn(`未处理的节点类型: ${node.shape}`);
+            return ts.factory.createEmptyStatement(); // 返回空语句以避免错误
+    }
+}
 // 编译 AST 为 TypeScript 代码
 function printTsCode(sourceFile: ts.SourceFile): string {
     const printer = ts.createPrinter();
@@ -183,9 +305,12 @@ function compileTsToJs(tsCode: string): string {
     const result = ts.transpileModule(tsCode, {
         compilerOptions: {
             module: ts.ModuleKind.CommonJS,
-            target: ts.ScriptTarget.ES2015,
+            target: ts.ScriptTarget.ES2022,
             strict: true,
             esModuleInterop: true,
+            preserveConstEnums: true,
+            noEmitOnError: true,
+            removeComments: false,
         },
     });
     console.log('result', result)
@@ -202,8 +327,8 @@ function compileTsToJs(tsCode: string): string {
 }
 
 // 示例 JSON 产物
-const intermediateJson = {"nodes":[{"id":"start-node","shape":"start-node","properties":{"name":"开始","nodeType":"COMMON","nodeId":"startComponent"},"next":"a809c872-82f5-44a8-bf1e-f117cbffd652"},{"id":"end-node","shape":"end-node","properties":{"name":"结束","nodeId":"endComponent","nodeType":"COMMON","result":{"key":["logic","VT_aaa"],"name":"aaa","dataType":"BOOLEAN","secondDataType":"VOID","value":"","valueType":"FIXED"},"iconColor":"#1382FF","size":{"width":220,"height":100}},"next":null},{"id":"354865da-c82d-4fca-a8c7-c344976910a7","shape":"change-variable-node","properties":{"name":"赋值节点","nodeId":"changeVariable","nodeType":"COMMON","key":["logic","VT_aaa"],"value":"dddd","dataType":"VOID","valueType":"FIXED","iconColor":"#1382FF","size":{"width":360,"height":160},"frontEndValue":{"valueType":"FIXED","value":"dddd"}},"next":"ec43883b-f725-436f-bd18-722b042ad05e"},{"id":"a809c872-82f5-44a8-bf1e-f117cbffd652","shape":"if-node","properties":{"value":"${field.逻辑变量.aaa::logic.VT_aaa} > 1","valueType":"EXPRESSION","frontEndValue":{"valueType":"EXPRESSION","value":"${field.逻辑变量.aaa::logic.VT_aaa} > 1"}},"next":null,"conditionValue":"${field.逻辑变量.aaa::logic.VT_aaa} > 1","conditionValueType":"EXPRESSION","trueBranch":"354865da-c82d-4fca-a8c7-c344976910a7","falseBranch":"4390f3b2-a957-4051-b98f-f86f18121e6a"},{"id":"4390f3b2-a957-4051-b98f-f86f18121e6a","shape":"end-node","properties":{"name":"结束","nodeId":"endComponent","nodeType":"COMMON","result":{"key":["logic","VT_aaa"],"name":"aaa","dataType":"BOOLEAN","value":""},"iconColor":"#1382FF","size":{"width":220,"height":100}},"next":null},{"id":"ec43883b-f725-436f-bd18-722b042ad05e","shape":"switch-node","properties":{"name":"匹配","nodeId":"switchComponent","nodeType":"SWITCH","iconColor":"#1382FF","size":{"width":360,"height":80},"widthUnit":210,"inputWidth":200,"value":"${field.逻辑变量.bbbb::logic.VT_bbbb}","valueType":"EXPRESSION","frontEndValue":{"valueType":"EXPRESSION","value":"${field.逻辑变量.bbbb::logic.VT_bbbb}"}},"next":null,"conditionValue":"${field.逻辑变量.bbbb::logic.VT_bbbb}","conditionValueType":"EXPRESSION","cases":[{"conditionValue":"1","next":"end-node"},{"conditionValue":"2","next":"de8d0cb0-56b3-4a7f-acf3-b0bf0c510953"}]},{"id":"de8d0cb0-56b3-4a7f-acf3-b0bf0c510953","shape":"change-variable-node","properties":{"name":"赋值节点","nodeId":"changeVariable","nodeType":"COMMON","key":["logic","VT_aaa"],"value":"ccc","dataType":"VOID","valueType":"FIXED","iconColor":"#1382FF","size":{"width":360,"height":160},"frontEndValue":{"valueType":"FIXED","value":"ccc"}},"next":"end-node"}],"vars":[{"varType":"LOCAL","dataType":"BOOLEAN","name":"aaa","key":"VT_aaa"},{"varType":"OUTPUT","dataType":"NUMBER","name":"bbbb","key":"VT_bbbb"},{"varType":"INPUT","dataType":"BOOLEAN","name":"p1","key":"VT_p1"},{"varType":"INPUT","dataType":"NUMBER","name":"p2","key":"VT_p2"}]};
-
+// const intermediateJson = {"nodes":[{"id":"start-node","shape":"start-node","properties":{"name":"开始","nodeType":"COMMON","nodeId":"startComponent"},"next":"a809c872-82f5-44a8-bf1e-f117cbffd652"},{"id":"end-node","shape":"end-node","properties":{"name":"结束","nodeId":"endComponent","nodeType":"COMMON","result":{"key":["logic","VT_aaa"],"name":"aaa","dataType":"BOOLEAN","secondDataType":"VOID","value":"","valueType":"FIXED"},"iconColor":"#1382FF","size":{"width":220,"height":100}},"next":null},{"id":"354865da-c82d-4fca-a8c7-c344976910a7","shape":"change-variable-node","properties":{"name":"赋值节点","nodeId":"changeVariable","nodeType":"COMMON","key":["logic","VT_aaa"],"value":"dddd","dataType":"VOID","valueType":"FIXED","iconColor":"#1382FF","size":{"width":360,"height":160},"frontEndValue":{"valueType":"FIXED","value":"dddd"}},"next":"ec43883b-f725-436f-bd18-722b042ad05e"},{"id":"a809c872-82f5-44a8-bf1e-f117cbffd652","shape":"if-node","properties":{"value":"${field.逻辑变量.aaa::logic.VT_aaa} > 1","valueType":"EXPRESSION","frontEndValue":{"valueType":"EXPRESSION","value":"${field.逻辑变量.aaa::logic.VT_aaa} > 1"}},"next":null,"conditionValue":"${field.逻辑变量.aaa::logic.VT_aaa} > 1","conditionValueType":"EXPRESSION","trueBranch":"354865da-c82d-4fca-a8c7-c344976910a7","falseBranch":"4390f3b2-a957-4051-b98f-f86f18121e6a"},{"id":"4390f3b2-a957-4051-b98f-f86f18121e6a","shape":"end-node","properties":{"name":"结束","nodeId":"endComponent","nodeType":"COMMON","result":{"key":["logic","VT_aaa"],"name":"aaa","dataType":"BOOLEAN","value":""},"iconColor":"#1382FF","size":{"width":220,"height":100}},"next":null},{"id":"ec43883b-f725-436f-bd18-722b042ad05e","shape":"switch-node","properties":{"name":"匹配","nodeId":"switchComponent","nodeType":"SWITCH","iconColor":"#1382FF","size":{"width":360,"height":80},"widthUnit":210,"inputWidth":200,"value":"${field.逻辑变量.bbbb::logic.VT_bbbb}","valueType":"EXPRESSION","frontEndValue":{"valueType":"EXPRESSION","value":"${field.逻辑变量.bbbb::logic.VT_bbbb}"}},"next":null,"conditionValue":"${field.逻辑变量.bbbb::logic.VT_bbbb}","conditionValueType":"EXPRESSION","cases":[{"conditionValue":"1","next":"end-node"},{"conditionValue":"2","next":"de8d0cb0-56b3-4a7f-acf3-b0bf0c510953"}]},{"id":"de8d0cb0-56b3-4a7f-acf3-b0bf0c510953","shape":"change-variable-node","properties":{"name":"赋值节点","nodeId":"changeVariable","nodeType":"COMMON","key":["logic","VT_aaa"],"value":"ccc","dataType":"VOID","valueType":"FIXED","iconColor":"#1382FF","size":{"width":360,"height":160},"frontEndValue":{"valueType":"FIXED","value":"ccc"}},"next":"end-node"}],"vars":[{"varType":"LOCAL","dataType":"BOOLEAN","name":"aaa","key":"VT_aaa"},{"varType":"OUTPUT","dataType":"NUMBER","name":"bbbb","key":"VT_bbbb"},{"varType":"INPUT","dataType":"BOOLEAN","name":"p1","key":"VT_p1"},{"varType":"INPUT","dataType":"NUMBER","name":"p2","key":"VT_p2"}]};
+const intermediateJson = { "nodes": [{ "id": "start-node", "shape": "start-node", "properties": { "name": "开始", "nodeType": "COMMON", "nodeId": "startComponent" }, "next": "8073dbef-ea1a-4f8c-a688-3b14e9b98a72" }, { "id": "end-node", "shape": "end-node", "properties": { "name": "结束", "nodeId": "endComponent", "nodeType": "COMMON", "result": { "key": [], "name": "", "dataType": "VOID", "secondDataType": "VOID", "value": "" }, "iconColor": "#1382FF", "size": { "width": 220, "height": 100 } }, "next": null }, { "id": "8073dbef-ea1a-4f8c-a688-3b14e9b98a72", "shape": "loop-node", "properties": { "loopList": "${field.逻辑变量.d::logic.VT_dd}", "loopObject": "item", "loopIndex": "index", "name": "循环列表", "nodeId": "iteratorComponent", "nodeType": "ITERATOR", "iconColor": "#1382FF", "size": { "width": 600, "height": 400 }, "frontEndLoopList": { "valueType": "EXPRESSION", "value": "${field.逻辑变量.d::logic.VT_dd}" } }, "next": "end-node", "body": ["02a8105b-54f6-4c2f-b1ef-7d97c2981567"], "bodyStart": "02a8105b-54f6-4c2f-b1ef-7d97c2981567" }, { "id": "02a8105b-54f6-4c2f-b1ef-7d97c2981567", "shape": "change-variable-node", "properties": { "name": "赋值节点", "nodeId": "changeVariable", "nodeType": "COMMON", "key": ["logic", "VT_vvv"], "value": "ggg", "dataType": "VOID", "valueType": "FIXED", "iconColor": "#1382FF", "size": { "width": 360, "height": 160 }, "frontEndValue": { "valueType": "FIXED", "value": "ggg" } }, "next": null }], "vars": [{ "varType": "INPUT", "dataType": "BOOLEAN", "name": "d", "key": "VT_dd" }, { "dataType": "BOOLEAN", "name": "vvv", "varType": "LOCAL", "key": "VT_vvv" }] }
 // 生成 AST
 const sourceFile = generateTsCode(intermediateJson);
 console.log('sourceFile', sourceFile)
