@@ -295,7 +295,7 @@ function compileTsToJs(tsCode: string): string {
     const result = ts.transpileModule(tsCode, {
         compilerOptions: {
             module: ts.ModuleKind.CommonJS,
-            target: ts.ScriptTarget.ES2022,
+            target: ts.ScriptTarget.ES2020,
             strict: true,
             esModuleInterop: true,
             preserveConstEnums: true,
