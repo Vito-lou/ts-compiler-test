@@ -139,26 +139,38 @@ export function analyzeTsCode(sourceFile: SourceFile): void {
         diagnostics.forEach(diagnostic => {
             const message = diagnostic.getMessageText();
             const category = diagnostic.getCategory();
-            const start = diagnostic.getStart();
-            const length = diagnostic.getLength();
-
-            if (start !== undefined && length !== undefined) {
-                const { line, column } = sourceFile.getLineAndColumnAtPos(start);
-
+            const start = diagnostic.getStart(); //得到的是从文件开始的字符偏移量（character offset），不是行数也不是列数。
+            console.log('start', start);
+            if (start !== undefined) {
+                const { line, column } = sourceFile.getLineAndColumnAtPos(start); //将这个偏移量转换为实际的行号和列号
+                console.log('line', line);
+                console.log('column', column);
                 // 获取整个源代码文本
                 const fullText = sourceFile.getFullText();
 
+                /**
+                 * 前置知识：
+                 * 当我们使用 sourceFile.addVariableStatement() 时，ts-morph 会自动在语句之间添加换行符
+这是标准的代码格式化行为，确保生成的代码是可读的
+在 Unix/Linux/Mac 系统中使用 \n，在 Windows 系统中可能使用 \r\n，但 ts-morph 会统一处理这种差异
+所以当我们在寻找行的边界时，可以确定：
+除了第一行，每行的开始位置一定是一个换行符
+这就是为什么我们在向左搜索行首时，是在找前一个换行符的位置
+                 */
                 // 找到当前行的起始和结束位置
                 let lineStart = start;
+                // lineStart > 0 是防止越过文件开头，如果不加这个判断，当start为0时，lineStart--会导致数组越界
                 while (lineStart > 0 && fullText[lineStart - 1] !== '\n') {
                     lineStart--;
                 }
 
                 let lineEnd = start;
+                // 向右找行尾时，防止越过文件结尾
                 while (lineEnd < fullText.length && fullText[lineEnd] !== '\n') {
                     lineEnd++;
                 }
-
+                // lineStart 和 lineEnd 是字符偏移量。 因为fullText是字符串，所以可以用slice来截取字符串
+                // 目标是截取出错的所在行
                 const fullLine = fullText.slice(lineStart, lineEnd).trim();
 
                 // 找到对应的代码段
